@@ -1807,6 +1807,7 @@ unsigned short ebcdic_mm[] = { 0xC2C9, 0xC785, 0x95C4, 0x8981, 0x95E2, 0xA8E2, 0
 void _ebcdic() { char* s = (char*) ebcdic_mm; s = (char*) ebcdic_ii; }
 int main() { _ascii (); _ebcdic (); return 0; }
 EOF
+echo "$CXX $CXXFLAGS -c -o $TMPO.o tmp_endianness_check.cpp"
 $CXX $CXXFLAGS -c -o $TMPO.o tmp_endianness_check.cpp
 if strings $TMPO.o | grep BIGenDianSyS >/dev/null; then
 	_endian=big
@@ -1826,7 +1827,10 @@ case $_endian in
 		add_line_to_config_h '#undef SCUMM_BIG_ENDIAN'
 		;;
 	*)
-		exit 1
+		add_line_to_config_h '#define SCUMM_LITTLE_ENDIAN'
+		add_line_to_config_h '#undef SCUMM_BIG_ENDIAN'
+
+		#exit 1
 		;;
 esac
 
