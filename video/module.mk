@@ -12,6 +12,7 @@ MODULE_OBJS := \
 	codecs/cdtoons.o \
 	codecs/cinepak.o \
 	codecs/indeo3.o \
+	codecs/jpeg.o \
 	codecs/mjpeg.o \
 	codecs/msrle.o \
 	codecs/msvideo1.o \
@@ -29,6 +30,11 @@ endif
 ifdef USE_THEORADEC
 MODULE_OBJS += \
 	theora_decoder.o
+endif
+
+ifdef USE_MPEG2
+MODULE_OBJS += \
+	codecs/mpeg.o
 endif
 
 # Include common rules

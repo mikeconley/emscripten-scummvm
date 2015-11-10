@@ -87,7 +87,8 @@ enum ADGameFlags {
 	ADGF_ADDENGLISH = (1 << 24), ///< always add English as language option
 	ADGF_MACRESFORK = (1 << 25), ///< the md5 for this entry will be calculated from the resource fork
 	ADGF_USEEXTRAASTITLE = (1 << 26), ///< Extra field value will be used as main game title, not gameid
-	ADGF_DROPLANGUAGE = (1 << 28), ///< don't add language to gameid
+	ADGF_DROPLANGUAGE = (1 << 27), ///< don't add language to gameid
+	ADGF_DROPPLATFORM = (1 << 28), ///< don't add platform to gameid
 	ADGF_CD = (1 << 29),    	///< add "-cd" to gameid
 	ADGF_DEMO = (1 << 30)   	///< add "-demo" to gameid
 };
@@ -280,6 +281,9 @@ protected:
 		return 0;
 	}
 
+private:
+	void initSubSystems(const ADGameDescription *gameDesc) const;
+
 protected:
 	/**
 	 * Detect games in specified directory.
@@ -315,7 +319,7 @@ protected:
 	void reportUnknown(const Common::FSNode &path, const ADFilePropertiesMap &filesProps) const;
 
 	// TODO
-	void updateGameDescriptor(GameDescriptor &desc, const ADGameDescription *realDesc) const;
+	virtual void updateGameDescriptor(GameDescriptor &desc, const ADGameDescription *realDesc) const;
 
 	/**
 	 * Compose a hashmap of all files in fslist.

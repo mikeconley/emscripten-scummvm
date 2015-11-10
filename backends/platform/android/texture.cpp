@@ -233,7 +233,7 @@ void GLESTexture::allocBuffer(GLuint w, GLuint h) {
 	_pixels = new byte[w * h * _surface.format.bytesPerPixel];
 	assert(_pixels);
 
-	_surface.pixels = _pixels;
+	_surface.setPixels(_pixels);
 
 	fillBuffer(0);
 
@@ -256,14 +256,18 @@ void GLESTexture::updateBuffer(GLuint x, GLuint y, GLuint w, GLuint h,
 }
 
 void GLESTexture::fillBuffer(uint32 color) {
-	assert(_surface.pixels);
+	assert(_surface.getPixels());
 
 	if (_pixelFormat.bytesPerPixel == 1 ||
-			((color & 0xff) == ((color >> 8) & 0xff)))
+			(_pixelFormat.bytesPerPixel == 2 &&
+			((color & 0xff) == ((color >> 8) & 0xff))))
 		memset(_pixels, color & 0xff, _surface.pitch * _surface.h);
-	else
-		Common::fill(_pixels, _pixels + _surface.pitch * _surface.h,
+	else if (_pixelFormat.bytesPerPixel == 2)
+		Common::fill((uint16 *)_pixels, (uint16 *)(_pixels + _surface.pitch * _surface.h),
 						(uint16)color);
+	else
+		Common::fill((uint32 *)_pixels, (uint32 *)(_pixels + _surface.pitch * _surface.h),
+						color);
 
 	setDirty();
 }
@@ -334,6 +338,13 @@ GLES565Texture::GLES565Texture() :
 GLES565Texture::~GLES565Texture() {
 }
 
+GLES8888Texture::GLES8888Texture() :
+	GLESTexture(GL_RGBA, GL_UNSIGNED_BYTE, pixelFormat()) {
+}
+
+GLES8888Texture::~GLES8888Texture() {
+}
+
 GLESFakePaletteTexture::GLESFakePaletteTexture(GLenum glFormat, GLenum glType,
 									Graphics::PixelFormat pixelFormat) :
 	GLESBaseTexture(glFormat, glType, pixelFormat),
@@ -377,7 +388,7 @@ void GLESFakePaletteTexture::allocBuffer(GLuint w, GLuint h) {
 	assert(_pixels);
 
 	// fixup surface, for the outside this is a CLUT8 surface
-	_surface.pixels = _pixels;
+	_surface.setPixels(_pixels);
 
 	fillBuffer(0);
 
@@ -386,8 +397,8 @@ void GLESFakePaletteTexture::allocBuffer(GLuint w, GLuint h) {
 }
 
 void GLESFakePaletteTexture::fillBuffer(uint32 color) {
-	assert(_surface.pixels);
-	memset(_surface.pixels, color & 0xff, _surface.pitch * _surface.h);
+	assert(_surface.getPixels());
+	memset(_surface.getPixels(), color & 0xff, _surface.pitch * _surface.h);
 	setDirty();
 }
 

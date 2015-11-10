@@ -21,6 +21,7 @@
  */
 
 #include "graphics/palette.h"
+#include "neverhood/gamemodule.h"
 #include "neverhood/smackerplayer.h"
 #include "neverhood/palette.h"
 #include "neverhood/resourceman.h"
@@ -31,7 +32,7 @@ namespace Neverhood {
 // SmackerSurface
 
 SmackerSurface::SmackerSurface(NeverhoodEngine *vm)
-	: BaseSurface(vm, 0, 0, 0), _smackerFrame(NULL) {
+	: BaseSurface(vm, 0, 0, 0, "smacker"), _smackerFrame(NULL) {
 }
 
 void SmackerSurface::draw() {
@@ -51,6 +52,18 @@ void SmackerSurface::setSmackerFrame(const Graphics::Surface *smackerFrame) {
 	_smackerFrame = smackerFrame;
 }
 
+void SmackerSurface::unsetSmackerFrame() {
+	_drawRect.x = 0;
+	_drawRect.y = 0;
+	_drawRect.width = 0;
+	_drawRect.height = 0;
+	_sysRect.x = 0;
+	_sysRect.y = 0;
+	_sysRect.width = 0;
+	_sysRect.height = 0;
+	_smackerFrame = NULL;
+}
+
 // SmackerDoubleSurface
 
 SmackerDoubleSurface::SmackerDoubleSurface(NeverhoodEngine *vm)
@@ -62,25 +75,27 @@ void SmackerDoubleSurface::draw() {
 		_vm->_screen->drawDoubleSurface2(_smackerFrame, _drawRect);
 }
 
+// NeverhoodSmackerDecoder
+
 void NeverhoodSmackerDecoder::forceSeekToFrame(uint frame) {
 	if (!isVideoLoaded())
 		return;
-	
+
 	if (frame >= getFrameCount())
 		error("Can't force Smacker seek to invalid frame %d", frame);
-	
+
 	if (_header.audioInfo[0].hasAudio)
 		error("Can't force Smacker frame seek with audio");
 	if (!rewind())
 		error("Failed to rewind");
-	
+
 	SmackerVideoTrack *videoTrack = (SmackerVideoTrack *)getTrack(0);
 	uint32 offset = 0;
 	for (uint32 i = 0; i < frame; i++) {
 		videoTrack->increaseCurFrame();
 		offset += _frameSizes[i] & ~3;
 	}
-	
+
 	_fileStream->seek(offset, SEEK_CUR);
 }
 
@@ -92,20 +107,6 @@ SmackerPlayer::SmackerPlayer(NeverhoodEngine *vm, Scene *scene, uint32 fileHash,
 	_drawX(-1), _drawY(-1) {
 
 	SetUpdateHandler(&SmackerPlayer::update);
-	open(fileHash, flag);
-}
-
-SmackerPlayer::~SmackerPlayer() {
-	close();
-}
-
-void SmackerPlayer::open(uint32 fileHash, bool keepLastFrame) {
-	debug(0, "SmackerPlayer::open(%08X)", fileHash);
-	
-	_fileHash = fileHash;
-	_keepLastFrame = keepLastFrame;
-
-	close();
 
 	if (_doubleSurface) {
 		_smackerSurface = new SmackerDoubleSurface(_vm);
@@ -113,19 +114,36 @@ void SmackerPlayer::open(uint32 fileHash, bool keepLastFrame) {
 		_smackerSurface = new SmackerSurface(_vm);
 	}
 
+	open(fileHash, flag);
+}
+
+SmackerPlayer::~SmackerPlayer() {
+	close();
+	delete _smackerSurface;
+	_smackerSurface = NULL;
+}
+
+void SmackerPlayer::open(uint32 fileHash, bool keepLastFrame) {
+	debug(0, "SmackerPlayer::open(%08X)", fileHash);
+
+	_fileHash = fileHash;
+	_keepLastFrame = keepLastFrame;
+
+	close();
+
 	_smackerFirst = true;
 
 	_stream = _vm->_res->createStream(fileHash);
 
 	_smackerDecoder = new NeverhoodSmackerDecoder();
 	_smackerDecoder->loadStream(_stream);
-	
+
 	_palette = new Palette(_vm);
 	_palette->usePalette();
 
 	if (!_paused)
 		_smackerDecoder->start();
-	
+
 }
 
 void SmackerPlayer::close() {
@@ -134,17 +152,16 @@ void SmackerPlayer::close() {
 	delete _smackerDecoder;
 	delete _palette;
 	// NOTE The SmackerDecoder deletes the _stream
-	delete _smackerSurface;
 	_smackerDecoder = NULL;
 	_palette = NULL;
 	_stream = NULL;
-	_smackerSurface = NULL;
+	_smackerSurface->unsetSmackerFrame();
 }
 
 void SmackerPlayer::gotoFrame(int frameNumber) {
 	if (_smackerDecoder) {
 		_smackerDecoder->forceSeekToFrame(frameNumber);
-		_smackerDecoder->decodeNextFrame();
+		updateFrame();
 	}
 }
 
@@ -188,7 +205,7 @@ void SmackerPlayer::update() {
 		} else if (!_keepLastFrame) {
 			// Inform the scene about the end of the video playback
 			if (_scene)
-				sendMessage(_scene, 0x3002, 0);
+				sendMessage(_scene, NM_ANIMATION_STOP, 0);
 			_videoDone = true;
 		} else {
 			rewind();
@@ -196,10 +213,14 @@ void SmackerPlayer::update() {
 			_videoDone = false;
 		}
 	}
-	
+
 }
 
 void SmackerPlayer::updateFrame() {
+
+	if (!_smackerDecoder || !_smackerSurface)
+		return;
+
 	const Graphics::Surface *smackerFrame = _smackerDecoder->decodeNextFrame();
 
 	if (_smackerFirst) {
@@ -220,7 +241,7 @@ void SmackerPlayer::updateFrame() {
 
 	if (_smackerDecoder->hasDirtyPalette())
 		updatePalette();
-		
+
 }
 
 void SmackerPlayer::updatePalette() {
@@ -231,6 +252,15 @@ void SmackerPlayer::updatePalette() {
 		tempPalette[i * 4 + 1] = smackerPalette[i * 3 + 1];
 		tempPalette[i * 4 + 2] = smackerPalette[i * 3 + 2];
 	}
+
+	// WORKAROUND: Scene 3, module 3000 defines a black color 255 instead of
+	// white, which results in the mouse cursor showing black. I'm not sure if
+	// color 255 is always supposed to be white. It's not feasible to check
+	// all scenes for a glitch that only seems to manifest in one, therefore
+	// we define color 255 to be white only for that scene.
+	if (_vm->_gameModule->getCurrentModuleNum() == 3000 && _vm->_gameState.sceneNum == 3)
+			tempPalette[255 * 4 + 0] = tempPalette[255 * 4 + 1] = tempPalette[255 * 4 + 2] = 0xFF;
+
 	_palette->copyPalette(tempPalette, 0, 256, 0);
 }
 

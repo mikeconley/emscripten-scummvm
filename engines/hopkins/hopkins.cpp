@@ -35,12 +35,9 @@
 
 namespace Hopkins {
 
-HopkinsEngine *g_vm;
-
 HopkinsEngine::HopkinsEngine(OSystem *syst, const HopkinsGameDescription *gameDesc) : Engine(syst),
 		_gameDescription(gameDesc), _randomSource("Hopkins") {
 	DebugMan.addDebugChannel(kDebugPath, "Path", "Pathfinding debug level");
-	g_vm = this;
 	_animMan = new AnimationManager(this);
 	_computer = new ComputerManager(this);
 	_dialog = new DialogsManager(this);
@@ -95,7 +92,7 @@ bool HopkinsEngine::canLoadGameStateCurrently() {
  * Returns true if it is currently okay to save the game
  */
 bool HopkinsEngine::canSaveGameStateCurrently() {
-	return !_globals->_exitId && !_globals->_cityMapEnabledFl && _events->_mouseFl 
+	return !_globals->_exitId && !_globals->_cityMapEnabledFl && _events->_mouseFl
 		&& _globals->_curRoomNum != 0 && !isUnderwaterSubScene();
 }
 
@@ -114,8 +111,6 @@ Common::Error HopkinsEngine::saveGameState(int slot, const Common::String &desc)
 }
 
 Common::Error HopkinsEngine::run() {
-	_saveLoad->initSaves();
-
 	_globals->setConfig();
 	_fileIO->initCensorship();
 	initializeSystem();
@@ -156,12 +151,7 @@ bool HopkinsEngine::runWin95Demo() {
 	_events->_rateCounter = 0;
 	_globals->_eventMode = EVENTMODE_IGNORE;
 	_globals->_speed = 1;
-
-	for (int i = 1; i < 50; i++) {
-		_graphicsMan->copySurface(_graphicsMan->_backBuffer, 0, 0, 640, 440, _graphicsMan->_frontBuffer, 0, 0);
-		_events->refreshScreenAndEvents();
-	}
-
+	_events->delay(500);
 	_globals->_eventMode = EVENTMODE_DEFAULT;
 	if (_events->_rateCounter > 475)
 		_globals->_speed = 2;
@@ -169,14 +159,14 @@ bool HopkinsEngine::runWin95Demo() {
 		_globals->_speed = 3;
 
 	if (_startGameSlot == -1)
-		_graphicsMan->fadeOutLong();
+		_graphicsMan->fadeOutShort();
 
 	_globals->_eventMode = EVENTMODE_IGNORE;
 	_globals->_characterSpriteBuf = _fileIO->loadFile("PERSO.SPR");
 
 	_globals->_characterType = CHARACTER_HOPKINS;
 	_objectsMan->_mapCarPosX = _objectsMan->_mapCarPosY = 0;
-	memset(_globals->_saveData, 0, 2000);
+	memset(_globals->_saveData, 0, sizeof(Savegame));
 	_globals->_exitId = 0;
 
 	if (getLanguage() != Common::PL_POL)
@@ -206,23 +196,31 @@ bool HopkinsEngine::runWin95Demo() {
 
 		switch (_globals->_exitId) {
 		case 1:
+			// Handles room: Apartment
 			_linesMan->setMaxLineIdx(40);
 			_globals->_characterMaxPosY = 435;
 			_objectsMan->sceneControl2("IM01", "IM01", "ANIM01", "IM01", 2, true);
 			break;
 
 		case 3:
+			// - Displays bank attack when leaving the apartment
+			// - Handles room: bottom of the apartment
 			if (!_globals->_saveData->_data[svBankAttackAnimPlayedFl]) {
 				_soundMan->playSound(3);
 				if (getPlatform() == Common::kPlatformOS2 || getPlatform() == Common::kPlatformBeOS)
 					_graphicsMan->loadImage("fond");
 				else {
-					if (_globals->_language == LANG_FR)
+					switch (_globals->_language) {
+					case LANG_FR:
 						_graphicsMan->loadImage("fondfr");
-					else if (_globals->_language == LANG_EN)
+						break;
+					case LANG_EN:
 						_graphicsMan->loadImage("fondan");
-					else if (_globals->_language == LANG_SP)
+						break;
+					case LANG_SP:
 						_graphicsMan->loadImage("fondes");
+						break;
+					}
 				}
 				_graphicsMan->fadeInLong();
 				_events->delay(500);
@@ -234,13 +232,13 @@ bool HopkinsEngine::runWin95Demo() {
 				if (!_globals->_censorshipFl)
 					_animMan->playAnim("BANQUE.ANM", "BANKUK.ANM", 200, 28, 200);
 				else
-					_animMan->playAnim("BANQUE.ANM", "BANKUK.ANM", 200, 28, 200);
+					_animMan->playAnim("BANKUK.ANM", "BANQUE.ANM", 200, 28, 200);
 				_soundMan->_specialSoundNum = 0;
 				_soundMan->removeSample(1);
 				_soundMan->removeSample(2);
 				_soundMan->removeSample(3);
 				_soundMan->removeSample(4);
-				_graphicsMan->fadeOutLong();
+				_graphicsMan->fadeOutShort();
 				_globals->_saveData->_data[svBankAttackAnimPlayedFl] = 1;
 			}
 			_linesMan->setMaxLineIdx(5);
@@ -249,12 +247,14 @@ bool HopkinsEngine::runWin95Demo() {
 			break;
 
 		case 4:
+			// Handle room: City map
 			_globals->_disableInventFl = true;
 			_objectsMan->handleCityMap();
 			_globals->_disableInventFl = false;
 			break;
 
 		case 5:
+			// Handle room: Outside the bank
 			_linesMan->setMaxLineIdx(5);
 			_globals->_characterMaxPosY = 455;
 
@@ -470,7 +470,7 @@ bool HopkinsEngine::runLinuxDemo() {
 	_globals->_characterSpriteBuf = _fileIO->loadFile("PERSO.SPR");
 	_globals->_characterType = CHARACTER_HOPKINS;
 	_objectsMan->_mapCarPosX = _objectsMan->_mapCarPosY = 0;
-	memset(_globals->_saveData, 0, 2000);
+	memset(_globals->_saveData, 0, sizeof(Savegame));
 	_globals->_exitId = 0;
 
 	if (_startGameSlot != -1)
@@ -526,12 +526,17 @@ bool HopkinsEngine::runLinuxDemo() {
 				if (getPlatform() == Common::kPlatformOS2 || getPlatform() == Common::kPlatformBeOS)
 					_graphicsMan->loadImage("fond");
 				else {
-					if (_globals->_language == LANG_FR)
+					switch (_globals->_language) {
+					case LANG_FR:
 						_graphicsMan->loadImage("fondfr");
-					else if (_globals->_language == LANG_EN)
+						break;
+					case LANG_EN:
 						_graphicsMan->loadImage("fondan");
-					else if (_globals->_language == LANG_SP)
+						break;
+					case LANG_SP:
 						_graphicsMan->loadImage("fondes");
+						break;
+					}
 				}
 				_graphicsMan->fadeInLong();
 				_events->delay(500);
@@ -798,14 +803,14 @@ bool HopkinsEngine::runFull() {
 
 	if (_startGameSlot == -1) {
 		if (getPlatform() == Common::kPlatformLinux) {
-				_graphicsMan->loadImage("H2");
-				_graphicsMan->fadeInLong();
-				_events->delay(500);
-				_graphicsMan->fadeOutLong();
-				_globals->_speed = 2;
-				_globals->_eventMode = EVENTMODE_IGNORE;
-				_graphicsMan->_fadingFl = true;
-				_animMan->playAnim("MP.ANM", "MP.ANM", 10, 16, 200);
+			_graphicsMan->loadImage("H2");
+			_graphicsMan->fadeInLong();
+			_events->delay(500);
+			_graphicsMan->fadeOutLong();
+			_globals->_speed = 2;
+			_globals->_eventMode = EVENTMODE_IGNORE;
+			_graphicsMan->_fadingFl = true;
+			_animMan->playAnim("MP.ANM", "MP.ANM", 10, 16, 200);
 		} else {
 			_animMan->playAnim("MP.ANM", "MP.ANM", 10, 16, 200);
 			_graphicsMan->fadeOutLong();
@@ -831,7 +836,7 @@ bool HopkinsEngine::runFull() {
 	_globals->_characterSpriteBuf = _fileIO->loadFile("PERSO.SPR");
 	_globals->_characterType = CHARACTER_HOPKINS;
 	_objectsMan->_mapCarPosX = _objectsMan->_mapCarPosY = 0;
-	memset(_globals->_saveData, 0, 2000);
+	memset(_globals->_saveData, 0, sizeof(Savegame));
 
 	_globals->_exitId = 0;
 
@@ -872,12 +877,17 @@ bool HopkinsEngine::runFull() {
 				if (getPlatform() == Common::kPlatformOS2 || getPlatform() == Common::kPlatformBeOS)
 					_graphicsMan->loadImage("fond");
 				else {
-					if (_globals->_language == LANG_FR)
+					switch (_globals->_language) {
+					case LANG_FR:
 						_graphicsMan->loadImage("fondfr");
-					else if (_globals->_language == LANG_EN)
+						break;
+					case LANG_EN:
 						_graphicsMan->loadImage("fondan");
-					else if (_globals->_language == LANG_SP)
+						break;
+					case LANG_SP:
 						_graphicsMan->loadImage("fondes");
+						break;
+					}
 				}
 				_graphicsMan->fadeInLong();
 				_events->delay(500);
@@ -1138,12 +1148,14 @@ bool HopkinsEngine::runFull() {
 			break;
 
 		case 30:
+			// Shooting
 			_linesMan->setMaxLineIdx(15);
 			_globals->_characterMaxPosY = 440;
 			_objectsMan->sceneControl2("IM30", "IM30", "ANIM30", "IM30", 24, false);
 			break;
 
 		case 31:
+			// Shooting target
 			_objectsMan->sceneControl("IM31", "IM31", "ANIM31", "IM31", 10, true);
 			break;
 
@@ -1158,6 +1170,7 @@ bool HopkinsEngine::runFull() {
 			break;
 
 		case 34:
+			// In the airport, before the flight cut-scene
 			_objectsMan->sceneControl("IM34", "IM34", "ANIM34", "IM34", 2, false);
 			break;
 
@@ -1188,6 +1201,7 @@ bool HopkinsEngine::runFull() {
 			}
 
 		case 50:
+			// Flight cut scene
 			playPlaneCutscene();
 			_globals->_exitId = 51;
 			break;
@@ -1647,8 +1661,8 @@ void HopkinsEngine::playIntro() {
 	_graphicsMan->setColorPercentage(253, 100, 100, 100);
 	_graphicsMan->setColorPercentage(251, 100, 100, 100);
 	_graphicsMan->setColorPercentage(254, 0, 0, 0);
-	for (int i = 0; i <= 4; i++)
-		_events->refreshScreenAndEvents();
+
+	_events->delay(500);
 
 	_globals->_eventMode = EVENTMODE_IGNORE;
 	_graphicsMan->fadeInLong();
@@ -1909,10 +1923,6 @@ void HopkinsEngine::bombExplosion() {
 }
 
 void HopkinsEngine::restoreSystem() {
-	// If the game isn't alerady trying to quit, flag that quitting is needed
-	if (!shouldQuit())
-		quitGame();
-
 	_events->refreshEvents();
 }
 
@@ -2237,6 +2247,8 @@ void HopkinsEngine::playPlaneCutscene() {
 	if (!_events->_escKeyFl) {
 		_graphicsMan->_fadingFl = true;
 		_animMan->playAnim("PARA00A.ANM", "PARA00.ANM", 9, 9, 9);
+	} else {
+		_graphicsMan->fadeOutShort();
 	}
 
 	_events->_escKeyFl = false;

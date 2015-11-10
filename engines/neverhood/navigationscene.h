@@ -38,10 +38,12 @@ public:
 	bool isWalkingForward() const { return _isWalkingForward; }
 	bool isTurning() const { return _isTurning; }
 	int getFrameNumber() const { return _smackerPlayer->getFrameNumber(); }
+	uint32 getNavigationListId() const { return _navigationListId; }
 protected:
 	SmackerPlayer *_smackerPlayer;
 	bool _smackerDone;
 	NavigationList *_navigationList;
+	uint32 _navigationListId;	// used for debugging
 	int _navigationIndex;
 	uint32 _smackerFileHash;
 	bool _interactive;
@@ -50,7 +52,6 @@ protected:
 	bool _leaveSceneAfter;
 	const byte *_itemsTypes;
 	void update();
-	void openSmacker(uint32 fileHash, bool keepLastFrame);
 	uint32 handleMessage(int messageNum, const MessageParam &param, Entity *sender);
 	void createMouseCursor();
 	void handleNavigation(const NPoint &mousePos);

@@ -40,6 +40,8 @@ public:
 	void handleMouseMove(int16 x, int16 y);
 	void handleMouseDown(int16 x, int16 y);
 	void handleMouseUp(int16 x, int16 y);
+	void handleWheelUp();
+	void handleWheelDown();
 	void handleSpaceKey();
 	void handleAsciiKey(char key);
 	void handleKeyDown(Common::KeyCode keyCode);
@@ -49,12 +51,16 @@ public:
 	void initWaterPipesPuzzle();
 	void initRadioPuzzle();
 	void initTestTubes1Puzzle();
-	void initTestTubes2Puzzle();	
+	void initTestTubes2Puzzle();
 	void initCannonSymbolsPuzzle();
 	void initCodeSymbolsPuzzle();
 	void initCubeSymbolsPuzzle();
 	void initCrystalColorsPuzzle();
 	uint32 getCurrRadioMusicFileHash();
+	int getCurrentModuleNum() { return _moduleNum; }
+	int getPreviousModuleNum() { return _moduleNum; }
+
+	void createModule(int moduleNum, int which);
 protected:
 	int _moduleNum;
 	Entity *_prevChildObject;
@@ -64,7 +70,6 @@ protected:
 	bool _canRequestMainMenu;
 	bool _mainMenuRequested;
 	uint32 handleMessage(int messageNum, const MessageParam &param, Entity *sender);
-	void createModule(int moduleNum, int which);
 	void createModuleByHash(uint32 nameHash);
 	void updateModule();
 	void openMainMenu();

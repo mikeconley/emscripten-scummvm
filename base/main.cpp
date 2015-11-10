@@ -47,8 +47,11 @@
 #include "common/debug.h"
 #include "common/debug-channels.h" /* for debug manager */
 #include "common/events.h"
-#include "common/EventRecorder.h"
+#include "gui/EventRecorder.h"
 #include "common/fs.h"
+#ifdef ENABLE_EVENTRECORDER
+#include "common/recorderfile.h"
+#endif
 #include "common/system.h"
 #include "common/textconsole.h"
 #include "common/tokenizer.h"
@@ -136,6 +139,19 @@ static Common::Error runGame(const EnginePlugin *plugin, OSystem &system, const 
 	Common::Error err = Common::kNoError;
 	Engine *engine = 0;
 
+#if defined(SDL_BACKEND) && defined(USE_OPENGL) && defined(USE_RGB_COLOR)
+	// HACK: We set up the requested graphics mode setting here to allow the
+	// backend to switch from Surface SDL to OpenGL if necessary. This is
+	// needed because otherwise the g_system->getSupportedFormats might return
+	// bad values.
+	g_system->beginGFXTransaction();
+		g_system->setGraphicsMode(ConfMan.get("gfx_mode").c_str());
+	if (g_system->endGFXTransaction() != OSystem::kTransactionSuccess) {
+		warning("Switching graphics mode to '%s' failed", ConfMan.get("gfx_mode").c_str());
+		return Common::kUnknownError;
+	}
+#endif
+
 	// Verify that the game path refers to an actual directory
 	if (!(dir.exists() && dir.isDirectory()))
 		err = Common::kPathNotDirectory;
@@ -186,7 +202,7 @@ static Common::Error runGame(const EnginePlugin *plugin, OSystem &system, const 
 	//
 
 	// Add the game path to the directory search list
-	SearchMan.addDirectory(dir.getPath(), dir, 0, 4);
+	engine->initializePath(dir);
 
 	// Add extrapath (if any) to the directory search list
 	if (ConfMan.hasKey("extrapath")) {
@@ -365,6 +381,7 @@ void mainLoop()
 }
 
 extern "C" int scummvm_main(int argc, const char * const argv[]) {
+        printf("Entering main function");
 	Common::String specialDebug;
 	Common::String command;
 
@@ -378,6 +395,7 @@ extern "C" int scummvm_main(int argc, const char * const argv[]) {
         if (directoryExists("/comi")) { args[1] = "-p/comi"; args[2] = "comi"; }
 	if (directoryExists("/loom")) { args[1] = "-p/loom"; args[2] = "loom"; }
 	if (directoryExists("/maniac")) { args[1] = "-p/maniac"; args[2] = "maniac"; }
+        if (directoryExists("/ags")) { args[1] = "-p/ags"; args[2] = "ags"; }
 
 	argv = args;
 	// Verify that the backend has been initialized (i.e. g_system has been set).
@@ -412,6 +430,8 @@ extern "C" int scummvm_main(int argc, const char * const argv[]) {
 	} else if (ConfMan.hasKey("debuglevel"))
 		gDebugLevel = ConfMan.getInt("debuglevel");
 
+  gDebugLevel = 10;
+
 	if (settings.contains("debugflags")) {
 		specialDebug = settings["debugflags"];
 		settings.erase("debugflags");
@@ -438,6 +458,7 @@ extern "C" int scummvm_main(int argc, const char * const argv[]) {
 	if (Base::processSettings(command, settings, res)) {
 		if (res.getCode() != Common::kNoError)
 			warning("%s", res.getDesc().c_str());
+                printf("Wakka wakka 1");
 		return res.getCode();
 	}
 
@@ -463,7 +484,9 @@ extern "C" int scummvm_main(int argc, const char * const argv[]) {
 			settings["gfx-mode"] = "default";
 		}
 	}
-
+	if (settings.contains("disable-display")) {
+		ConfMan.setInt("disable-display", 1, Common::ConfigManager::kTransientDomain);
+	}
 	setupGraphics(system);
 
 	// Init the different managers that are used by the engines.
@@ -476,13 +499,15 @@ extern "C" int scummvm_main(int argc, const char * const argv[]) {
 	// take place after the backend is initiated and the screen has been setup
 	system.getEventManager()->init();
 
+#ifdef ENABLE_EVENTRECORDER
 	// Directly after initializing the event manager, we will initialize our
 	// event recorder.
 	//
 	// TODO: This is just to match the current behavior, when we further extend
 	// our event recorder, we might do this at another place. Or even change
 	// the whole API for that ;-).
-	g_eventRec.init();
+	g_eventRec.RegisterEventSource();
+#endif
 
 	// Now as the event manager is created, setup the keymapper
 	setupKeymapper(system);
@@ -498,18 +523,36 @@ extern "C" int scummvm_main(int argc, const char * const argv[]) {
 		// Try to find a plugin which feels responsible for the specified game.
 		const EnginePlugin *plugin = detectPlugin();
 		if (plugin) {
+                        printf("Found a plugin");
 			// Unload all plugins not needed for this game,
 			// to save memory
 			PluginManager::instance().unloadPluginsExcept(PLUGIN_TYPE_ENGINE, plugin);
 
+#ifdef ENABLE_EVENTRECORDER
+			Common::String recordMode = ConfMan.get("record_mode");
+			Common::String recordFileName = ConfMan.get("record_file_name");
+
+			if (recordMode == "record") {
+				g_eventRec.init(g_eventRec.generateRecordFileName(ConfMan.getActiveDomainName()), GUI::EventRecorder::kRecorderRecord);
+			} else if (recordMode == "playback") {
+				g_eventRec.init(recordFileName, GUI::EventRecorder::kRecorderPlayback);
+			} else if ((recordMode == "info") && (!recordFileName.empty())) {
+				Common::PlaybackFile record;
+				record.openRead(recordFileName);
+				debug("info:author=%s name=%s description=%s", record.getHeader().author.c_str(), record.getHeader().name.c_str(), record.getHeader().description.c_str());
+				break;
+			}
+#endif
 			// Try to run the game
 			Common::Error result = runGame(plugin, system, specialDebug);
 			mainLoop();
 			return 0;
 
+#ifdef ENABLE_EVENTRECORDER
 			// Flush Event recorder file. The recorder does not get reinitialized for next game
 			// which is intentional. Only single game per session is allowed.
 			g_eventRec.deinit();
+#endif
 
 		#if defined(UNCACHED_PLUGINS) && defined(DYNAMIC_MODULES)
 			// do our best to prevent fragmentation by unloading as soon as we can
@@ -534,6 +577,11 @@ extern "C" int scummvm_main(int argc, const char * const argv[]) {
 			#ifdef FORCE_RTL
 			g_system->getEventManager()->resetQuit();
 			#endif
+			#ifdef ENABLE_EVENTRECORDER
+			if (g_eventRec.checkForContinueGame()) {
+				continue;
+			}
+			#endif
 
 			// Discard any command line options. It's unlikely that the user
 			// wanted to apply them to *all* games ever launched.
@@ -545,6 +593,7 @@ extern "C" int scummvm_main(int argc, const char * const argv[]) {
 			PluginManager::instance().loadAllPlugins(); // only for cached manager
 
 		} else {
+                        printf("No engine. :(");
 			GUI::displayErrorDialog(_("Could not find any engine capable of running the selected game"));
 		}
 
@@ -557,7 +606,9 @@ extern "C" int scummvm_main(int argc, const char * const argv[]) {
 	GUI::GuiManager::destroy();
 	Common::ConfigManager::destroy();
 	Common::DebugManager::destroy();
-	Common::EventRecorder::destroy();
+#ifdef ENABLE_EVENTRECORDER
+	GUI::EventRecorder::destroy();
+#endif
 	Common::SearchManager::destroy();
 #ifdef USE_TRANSLATION
 	Common::TranslationManager::destroy();
@@ -571,5 +622,6 @@ extern "C" int scummvm_main(int argc, const char * const argv[]) {
 	EngineManager::destroy();
 	Graphics::YUVToRGBManager::destroy();
 
+        printf("Exiting yo");
 	return 0;
 }

@@ -40,6 +40,7 @@
 #include "graphics/scaler.h"
 #include "graphics/scaler/aspect.h"
 #include "graphics/surface.h"
+#include "gui/EventRecorder.h"
 
 sSDL_Surface * sSDL_CreateRGBSurface (Uint32 flags,
 			int width, int height, int depth,
@@ -225,18 +226,11 @@ SurfaceSdlGraphicsManager::SurfaceSdlGraphicsManager(SdlEventSource *sdlEventSou
 	_paletteDirtyStart(0), _paletteDirtyEnd(0),
 	_screenIsLocked(false),
 	_graphicsMutex(0),
+	_displayDisabled(false),
 #ifdef USE_SDL_DEBUG_FOCUSRECT
 	_enableFocusRectDebugCode(false), _enableFocusRect(false), _focusRect(),
 #endif
 	_transactionMode(kTransactionNone) {
-
-	if (SDL_InitSubSystem(SDL_INIT_VIDEO) == -1) {
-		error("Could not initialize SDL: %s", SDL_GetError());
-	}
-
-	// This is also called in initSDL(), but initializing graphics
-	// may reset it.
-	SDL_EnableUNICODE(1);
 
 	// allocate palette storage
 	_currentPalette = (SDL_Color *)calloc(sizeof(SDL_Color), 256);
@@ -252,8 +246,6 @@ SurfaceSdlGraphicsManager::SurfaceSdlGraphicsManager(SdlEventSource *sdlEventSou
 	if (ConfMan.hasKey("use_sdl_debug_focusrect"))
 		_enableFocusRectDebugCode = ConfMan.getBool("use_sdl_debug_focusrect");
 #endif
-
-	SDL_ShowCursor(SDL_DISABLE);
 
 	memset(&_oldVideoMode, 0, sizeof(_oldVideoMode));
 	memset(&_videoMode, 0, sizeof(_videoMode));
@@ -281,10 +273,6 @@ SurfaceSdlGraphicsManager::SurfaceSdlGraphicsManager(SdlEventSource *sdlEventSou
 }
 
 SurfaceSdlGraphicsManager::~SurfaceSdlGraphicsManager() {
-	// Unregister the event observer
-	if (g_system->getEventManager()->getEventDispatcher() != NULL)
-		g_system->getEventManager()->getEventDispatcher()->unregisterObserver(this);
-
 	unloadGFXMode();
 	if (_mouseSurface)
 		SDL_FreeSurface(_mouseSurface);
@@ -299,9 +287,20 @@ SurfaceSdlGraphicsManager::~SurfaceSdlGraphicsManager() {
 	free(_mouseData);
 }
 
-void SurfaceSdlGraphicsManager::initEventObserver() {
+void SurfaceSdlGraphicsManager::activateManager() {
+	SdlGraphicsManager::activateManager();
+
 	// Register the graphics manager as a event observer
 	g_system->getEventManager()->getEventDispatcher()->registerObserver(this, 10, false);
+}
+
+void SurfaceSdlGraphicsManager::deactivateManager() {
+	// Unregister the event observer
+	if (g_system->getEventManager()->getEventDispatcher()) {
+		g_system->getEventManager()->getEventDispatcher()->unregisterObserver(this);
+	}
+
+	SdlGraphicsManager::deactivateManager();
 }
 
 bool SurfaceSdlGraphicsManager::hasFeature(OSystem::Feature f) {
@@ -351,16 +350,16 @@ bool SurfaceSdlGraphicsManager::getFeatureState(OSystem::Feature f) {
 	}
 }
 
-const OSystem::GraphicsMode *SurfaceSdlGraphicsManager::supportedGraphicsModes() {
-	return s_supportedGraphicsModes;
-}
-
 const OSystem::GraphicsMode *SurfaceSdlGraphicsManager::getSupportedGraphicsModes() const {
 	return s_supportedGraphicsModes;
 }
 
 int SurfaceSdlGraphicsManager::getDefaultGraphicsMode() const {
+#ifdef USE_SCALERS
 	return GFX_DOUBLESIZE;
+#else
+	return GFX_NORMAL;
+#endif
 }
 
 void SurfaceSdlGraphicsManager::resetGraphicsScale() {
@@ -835,6 +834,8 @@ bool SurfaceSdlGraphicsManager::loadGFXMode() {
 	if (_screen == NULL)
 		error("allocating _screen failed");
 
+	// Avoid having SDL_SRCALPHA set even if we supplied an alpha-channel in the format.
+	SDL_SetAlpha(_screen, 0, 255);
 #else
 	_screen = sSDL_CreateRGBSurface(SDL_SWSURFACE, _videoMode.screenWidth, _videoMode.screenHeight, 8, 0, 0, 0, 0);
 	if (_screen == NULL)
@@ -855,11 +856,22 @@ bool SurfaceSdlGraphicsManager::loadGFXMode() {
 		fixupResolutionForAspectRatio(_videoMode.desiredAspectRatio, _videoMode.hardwareWidth, _videoMode.hardwareHeight);
 	}
 
-	_hwscreen = SDL_SetVideoMode(_videoMode.hardwareWidth, _videoMode.hardwareHeight, 32,
-		_videoMode.fullscreen ? (SDL_FULLSCREEN|SDL_SWSURFACE) : SDL_SWSURFACE
-//	_hwscreen = SDL_SetVideoMode(_videoMode.hardwareWidth, _videoMode.hardwareHeight, 16,
-//		_videoMode.fullscreen ? (SDL_FULLSCREEN|SDL_SWSURFACE) : SDL_SWSURFACE
-	);
+#ifdef ENABLE_EVENTRECORDER
+	_displayDisabled = ConfMan.getBool("disable_display");
+
+	if (_displayDisabled) {
+		_hwscreen = g_eventRec.getSurface(_videoMode.hardwareWidth, _videoMode.hardwareHeight);
+	} else
+#endif
+		{
+   	        _hwscreen = SDL_SetVideoMode(_videoMode.hardwareWidth, _videoMode.hardwareHeight, 32,
+		        _videoMode.fullscreen ? (SDL_FULLSCREEN|SDL_SWSURFACE) : SDL_SWSURFACE);
+
+		//_hwscreen = SDL_SetVideoMode(_videoMode.hardwareWidth, _videoMode.hardwareHeight, 16,
+		//	_videoMode.fullscreen ? (SDL_FULLSCREEN|SDL_SWSURFACE) : SDL_SWSURFACE
+		//	);
+	}
+
 #ifdef USE_RGB_COLOR
 	detectSupportedFormats();
 #endif
@@ -1164,7 +1176,9 @@ void SurfaceSdlGraphicsManager::internUpdateScreen() {
 		for (r = _dirtyRectList; r != lastRect; ++r) {
 			register int dst_y = r->y + _currentShakePos;
 			register int dst_h = 0;
+#ifdef USE_SCALERS
 			register int orig_dst_y = 0;
+#endif
 			register int rx1 = r->x * scale1;
 
 			if (dst_y < height) {
@@ -1172,7 +1186,9 @@ void SurfaceSdlGraphicsManager::internUpdateScreen() {
 				if (dst_h > height - dst_y)
 					dst_h = height - dst_y;
 
+#ifdef USE_SCALERS
 				orig_dst_y = dst_y;
+#endif
 				dst_y = dst_y * scale1;
 
 				if (_videoMode.aspectRatioCorrection && !_overlayVisible)
@@ -1286,7 +1302,9 @@ void SurfaceSdlGraphicsManager::internUpdateScreen() {
 #endif
 
 		// Finally, blit all our changes to the screen
-		SDL_UpdateRects(_hwscreen, _numDirtyRects, _dirtyRectList);
+		if (!_displayDisabled) {
+			SDL_UpdateRects(_hwscreen, _numDirtyRects, _dirtyRectList);
+		}
 	}
 
 	_numDirtyRects = 0;
@@ -1401,15 +1419,13 @@ Graphics::Surface *SurfaceSdlGraphicsManager::lockScreen() {
 //	if (SDL_LockSurface(_screen) == -1)
 //		error("SDL_LockSurface failed: %s", SDL_GetError());
 
-	_framebuffer.pixels = _screen->pixels;
-	_framebuffer.w = _screen->w;
-	_framebuffer.h = _screen->h;
-	_framebuffer.pitch = _screen->pitch;
+	_framebuffer.init(_screen->w, _screen->h, _screen->pitch, _screen->pixels,
 #ifdef USE_RGB_COLOR
-	_framebuffer.format = _screenFormat;
+	                  _screenFormat
 #else
-	_framebuffer.format = Graphics::PixelFormat::createFormatCLUT8();
+	                  Graphics::PixelFormat::createFormatCLUT8()
 #endif
+	                 );
 
 	return &_framebuffer;
 }
@@ -1433,8 +1449,8 @@ void SurfaceSdlGraphicsManager::unlockScreen() {
 
 void SurfaceSdlGraphicsManager::fillScreen(uint32 col) {
 	Graphics::Surface *screen = lockScreen();
-	if (screen && screen->pixels)
-		memset(screen->pixels, col, screen->h * screen->pitch);
+	if (screen && screen->getPixels())
+		memset(screen->getPixels(), col, screen->h * screen->pitch);
 	unlockScreen();
 }
 
@@ -2164,15 +2180,12 @@ void SurfaceSdlGraphicsManager::displayMessageOnOSD(const char *msg) {
 		error("displayMessageOnOSD: SDL_LockSurface failed: %s", SDL_GetError());
 
 	Graphics::Surface dst;
-	dst.pixels = _osdSurface->pixels;
-	dst.w = _osdSurface->w;
-	dst.h = _osdSurface->h;
-	dst.pitch = _osdSurface->pitch;
-	dst.format = Graphics::PixelFormat(_osdSurface->format->BytesPerPixel,
-	                                   8 - _osdSurface->format->Rloss, 8 - _osdSurface->format->Gloss,
-	                                   8 - _osdSurface->format->Bloss, 8 - _osdSurface->format->Aloss,
-	                                   _osdSurface->format->Rshift, _osdSurface->format->Gshift,
-	                                   _osdSurface->format->Bshift, _osdSurface->format->Ashift);
+	dst.init(_osdSurface->w, _osdSurface->h, _osdSurface->pitch, _osdSurface->pixels,
+	         Graphics::PixelFormat(_osdSurface->format->BytesPerPixel,
+	                               8 - _osdSurface->format->Rloss, 8 - _osdSurface->format->Gloss,
+	                               8 - _osdSurface->format->Bloss, 8 - _osdSurface->format->Aloss,
+	                               _osdSurface->format->Rshift, _osdSurface->format->Gshift,
+	                               _osdSurface->format->Bshift, _osdSurface->format->Ashift));
 
 	// The font we are going to use:
 	const Graphics::Font *font = FontMan.getFontByUsage(Graphics::FontManager::kLocalizedFont);
